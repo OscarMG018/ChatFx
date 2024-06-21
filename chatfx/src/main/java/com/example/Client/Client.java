@@ -29,7 +29,7 @@ public class Client {
     private Client() {
         try {
             user = User.getCurrentUser();
-            socket = new Socket("localhost", port);
+            socket = new Socket("192.168.3.163", port);
             InputStream socketInputStream = socket.getInputStream();
 
             PipedInputStream pos1 = new PipedInputStream();
