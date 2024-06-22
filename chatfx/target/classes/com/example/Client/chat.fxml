@@ -1,13 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
 <?import javafx.geometry.Insets?>
+<?import javafx.scene.control.ScrollPane?>
 <?import javafx.scene.control.TextField?>
 <?import javafx.scene.layout.BorderPane?>
+<?import javafx.scene.layout.HBox?>
 <?import javafx.scene.layout.VBox?>
 
-<BorderPane maxHeight="-Infinity" maxWidth="-Infinity" minHeight="-Infinity" minWidth="-Infinity" prefHeight="400.0" prefWidth="600.0" xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.example.Client.ChatControler">
-   <center>
-      <BorderPane prefHeight="200.0" prefWidth="200.0" BorderPane.alignment="CENTER">
+<HBox prefHeight="456.0" prefWidth="675.0" xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.example.Client.ChatControler">
+   <children>
+      <VBox fx:id="GroupList" nodeOrientation="LEFT_TO_RIGHT" prefHeight="400.0" prefWidth="202.0" HBox.hgrow="SOMETIMES" />
+      <BorderPane prefHeight="456.0" prefWidth="474.0" HBox.hgrow="ALWAYS">
          <bottom>
             <TextField fx:id="message" onAction="#sendMessage" BorderPane.alignment="CENTER">
                <BorderPane.margin>
@@ -19,11 +22,12 @@
             <Insets bottom="10.0" left="10.0" right="10.0" top="10.0" />
          </padding>
          <center>
-            <VBox fx:id="chatBox" prefHeight="339.0" prefWidth="400.0" BorderPane.alignment="CENTER" />
+            <ScrollPane fx:id="scrollPane" hbarPolicy="NEVER" prefHeight="200.0" prefWidth="200.0" BorderPane.alignment="CENTER">
+               <content>
+                  <VBox fx:id="chatBox" maxHeight="1.7976931348623157E308" maxWidth="1.7976931348623157E308" prefHeight="397.0" prefWidth="449.0" />
+               </content>
+            </ScrollPane>
          </center>
       </BorderPane>
-   </center>
-   <left>
-      <VBox prefHeight="400.0" prefWidth="202.0" BorderPane.alignment="CENTER" />
-   </left>
-</BorderPane>
+   </children>
+</HBox>

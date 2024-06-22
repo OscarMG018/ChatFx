@@ -1,23 +1,24 @@
 package com.example.Client;
 
-import java.util.ArrayList;
-import java.util.ResourceBundle;
-
+import java.util.*;
+import com.example.Common.*;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import java.io.*;
-
 import javafx.application.Platform;
 import javafx.fxml.*;
 import java.net.*;
-import java.time.LocalDate;
-import java.time.LocalTime;
+import java.time.*;
 
 public class ChatControler implements Initializable {
     @FXML
     private TextField message;
     @FXML
     private VBox chatBox;
+    @FXML
+    private ScrollPane scrollPane;
+    @FXML
+    private VBox GroupList;
 
     private Client client;
     private User user;
@@ -27,16 +28,15 @@ public class ChatControler implements Initializable {
     @Override
     public void initialize(URL location, ResourceBundle resources) {
         client = Client.getInstance();
-        user = User.getCurrentUser();
+        user = Client.user;
         groups = new ArrayList<Group>();
-        // TODO load all groups of the user from server
-        groups.add(new Group(1));
+        LoadGroups();
+        //groups.add(new Group(1,"Global"));
         Thread t = new Thread(new MessageReciver(chatBox, client, user, this));
         t.start();
     }
 
     public void addMessage(String groupId, String displayName, String message) {
-        System.out.println("Add message to group " + groupId);
         for(Group group : groups) {
             if(group.getId() == Integer.parseInt(groupId)) {
                 group.addMessage(displayName, message);
@@ -46,6 +46,7 @@ public class ChatControler implements Initializable {
                         Label label = new Label(displayName + ": " + message);
                         label.setWrapText(true);
                         chatBox.getChildren().add(label);
+                        scrollPane.setVvalue(1.0);
                     });
                 }
             }
@@ -59,8 +60,31 @@ public class ChatControler implements Initializable {
             return;
         }
         message.setText("");
-        client.sendMessage("CHATMESSAGE:" +groups.get(ActiveGroup).getId()+",<TEXT!"+ msg.length() +">" +msg);
+        client.sendMessageWithoutResponse("CHATMESSAGE:" +groups.get(ActiveGroup).getId()+",<TEXT!"+ msg.length() +">" +msg);
         addMessage(""+groups.get(ActiveGroup).getId(), user.displayName, msg);
+    }
+
+    public void LoadGroups() {
+        ServerMessage msg = client.sendMessage("GETGROUPS:" + user.id);
+        System.out.println(msg);
+        for (int i = 0; i<msg.content.length;i+=2) {
+            final int index = i/2;  
+            int id = Integer.parseInt(msg.content[i]);
+            String groupName = msg.content[i+1];
+            groups.add(new Group(id, groupName));
+            Platform.runLater(() ->{  
+                //Add group to groupList
+                Button button = new Button(groupName);
+                button.setMaxWidth(Double.MAX_VALUE);
+                button.setPrefHeight(50);
+                button.setStyle("-fx-font-size: 20px;");
+                button.setOnAction(e -> {
+                    ActiveGroup = index;
+                    groups.get(ActiveGroup).ViewMessages(chatBox);
+                });
+                GroupList.getChildren().add(button);
+            });
+        }
     }
 }
 
@@ -100,72 +124,10 @@ class MessageReciver implements Runnable {
         }
     }
 
-    public static String[] split(String str, char delimiter) {
-        // List to hold the parts
-        ArrayList<String> parts = new ArrayList<>();
-        // StringBuilder to build each part
-        StringBuilder currentPart = new StringBuilder();
-
-        // Iterate through each character in the string
-        for (int i = 0; i < str.length(); i++) {
-            if (currentPart.toString().matches(".*<TEXT!\\d+>")){
-                String numString = currentPart.toString().substring(currentPart.indexOf("<")+6, currentPart.length()-1);
-                int n = Integer.parseInt(numString);
-                for (int j = 0; j < n; j++) {
-                    currentPart.append(str.charAt(i));
-                    i++;
-                }
-            }
-            else {
-                char currentChar = str.charAt(i);
-
-                // If the current character is the delimiter, add the current part to the list
-                if (currentChar == delimiter) {
-                    parts.add(currentPart.toString());
-                    // Reset the StringBuilder for the next part
-                    currentPart = new StringBuilder();
-                } else {
-                    // Otherwise, append the character to the current part
-                    currentPart.append(currentChar);
-                }
-            }
-        }
-
-        // Add the last part to the list
-        parts.add(currentPart.toString());
-
-        // Convert the list to an array and return
-        return parts.toArray(new String[0]);
-    }
-
-    public ServerMessage parseMessage(String message) {
-        if (message == null) {
-            return null;
-        }
-        ServerMessage msg = new ServerMessage();
-        String[] parts = split(message, ':');
-        if (parts.length < 2) {
-            return null;
-        }
-        try {
-            msg.type = MessageType.valueOf(parts[0]);
-            msg.command = Command.valueOf(parts[1]);
-            if (parts.length == 3) {
-                msg.content = split(parts[2], ',');
-            }
-            else {
-                msg.content = new String[0];
-            }
-            return msg;
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
     private void onMessageRecived(String string) {
         //Chat:groupid,username,message
         System.out.println("Message Recived: " + string);
-        ServerMessage msg = parseMessage(string);
+        ServerMessage msg = ServerMessage.parseMessage(string);
         switch (msg.command) {
             case CHATMESSAGE:
                 if(msg.content.length != 3) {
@@ -183,44 +145,12 @@ class MessageReciver implements Runnable {
     }
 }
 
-enum Command {
-    LOGIN,
-    SIGNUP,
-    CHATMESSAGE,
-    EXIT
-}
-
-enum MessageType {
-    REQUEST,
-    RESPONSE,
-    MESSAGE
-}
-
-class ServerMessage {
-    public MessageType type; //Request, Response, Message
-    public Command command; //Login, Signup, Chat, exit
-    public String[] content; //Username, Password, Message...
-
-    @Override
-    public String toString() {
-        String s = type.toString() + ":" + command.toString() + ":";
-        for (int i = 0; i < content.length; i++) {
-            String str = content[i];
-            s += str;
-            if (i < content.length - 1) {
-                s += ",";
-            }
-        }
-        return s;
-    }
-}
-
 class Group {
     private int id;
     private String name;
     private ArrayList<Message> messages;
 
-    public Group(int id) {
+    public Group(int id,String name) {
         this.id = id;
         this.messages = new ArrayList<Message>();
         loadMessages();
@@ -228,6 +158,15 @@ class Group {
 
     public void loadMessages() {
         // TODO load messages from server
+    }
+
+    public void ViewMessages(VBox chatBox) {
+        chatBox.getChildren().clear();
+        for (Message message : messages) {
+            Label label = new Label(message.username + ": " + message.message);
+            label.setWrapText(true);
+            chatBox.getChildren().add(label);
+        }
     }
 
     public void addMessage(String username, String message) {
@@ -276,5 +215,6 @@ class Message {
         this.message = message;
         this.time = time;
     }
+
 }
 

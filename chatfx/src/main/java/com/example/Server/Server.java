@@ -5,51 +5,8 @@ import java.net.*;
 import java.io.*;
 import java.util.*;
 import java.util.regex.*;
-
-enum Command {
-    LOGIN,
-    SIGNUP,
-    CHATMESSAGE,
-    EXIT
-}
-
-enum MessageType {
-    REQUEST,
-    RESPONSE,
-    MESSAGE
-}
-
-enum Code {
-    OK,
-    //login
-    USER_NOT_FOUND,
-    INVALID_PASSWORD,
-    //signup
-    USER_ALREADY_EXISTS,
-    //other
-    SQL_ERROR,
-    INVALID_MESSAGE,
-    INVALID_COMMAND_USAGE
-}
-
-class Message {
-    public MessageType type; //Request, Response, Message
-    public Command command; //Login, Signup, Chat, exit
-    public String[] content; //Username, Password, Message...
-
-    @Override
-    public String toString() {
-        String s = type.toString() + ":" + command.toString() + ":";
-        for (int i = 0; i < content.length; i++) {
-            String str = content[i];
-            s += str;
-            if (i < content.length - 1) {
-                s += ",";
-            }
-        }
-        return s;
-    }
-}
+import com.example.Common.*;
+import com.example.Common.ServerMessage.*;
 
 class ClientHandler implements Runnable {
     private Socket socket;
@@ -108,7 +65,7 @@ class ClientHandler implements Runnable {
     }
 
     public void onMessage(String message) {//login:username,password or signup:username,password,displayName
-        Message msg = parseMessage(message);
+        ServerMessage msg = ServerMessage.parseMessage(message);
         if (msg == null) {
             outputStream.println("RESPONSE:" + Code.INVALID_MESSAGE.toString());
             return;
@@ -124,7 +81,7 @@ class ClientHandler implements Runnable {
                     String password = msg.content[1];
                     Code code = logIn(username, password);
                     if (code.equals(Code.OK)) {
-                        outputStream.println("RESPONSE:" + code.toString()+","+user.id+","+user.displayName);
+                        outputStream.println("RESPONSE:" + code.toString()+":"+user.id+","+user.displayName);
                     } 
                     else {
                         outputStream.println("RESPONSE:" + code.toString());
@@ -140,7 +97,7 @@ class ClientHandler implements Runnable {
                     String _password = msg.content[2];
                     Code _code = signUp(_username, _password, _displayName);
                     if (_code.equals(Code.OK)) {
-                        outputStream.println("RESPONSE:" + _code.toString()+","+user.id);
+                        outputStream.println("RESPONSE:" + _code.toString()+":"+user.id);
                     } 
                     else {
                         outputStream.println("RESPONSE:" + _code.toString());
@@ -148,11 +105,17 @@ class ClientHandler implements Runnable {
                     break;
                 case CHATMESSAGE:
                     if (msg.content.length != 2) {
+                        System.out.println(Code.INVALID_COMMAND_USAGE.toString() + "for CHATMESSAGE: " + msg);
+                        return;
+                    }
+                    broadCastMesage(msg);
+                    break;
+                case GETGROUPS:
+                    if (msg.content.length != 1) {
                         outputStream.println("RESPONSE:" + Code.INVALID_COMMAND_USAGE.toString());
                         return;
                     }
-                    code = broadCastMesage(msg);
-                    outputStream.println("RESPONSE:" + code.toString());
+                    getGroups();
                     break;
                 case EXIT:
                     onClose();
@@ -161,65 +124,23 @@ class ClientHandler implements Runnable {
         }
     }
     
-    public static String[] split(String str, char delimiter) {
-        // List to hold the parts
-        ArrayList<String> parts = new ArrayList<>();
-        // StringBuilder to build each part
-        StringBuilder currentPart = new StringBuilder();
-
-        // Iterate through each character in the string
-        for (int i = 0; i < str.length(); i++) {
-            if (currentPart.toString().matches(".*<TEXT!\\d+>")){
-                String numString = currentPart.toString().substring(currentPart.indexOf("<")+6, currentPart.length()-1);
-                int n = Integer.parseInt(numString);
-                for (int j = 0; j < n; j++) {
-                    currentPart.append(str.charAt(i));
-                    i++;
-                }
-            }
-            else {
-                char currentChar = str.charAt(i);
-
-                // If the current character is the delimiter, add the current part to the list
-                if (currentChar == delimiter) {
-                    parts.add(currentPart.toString());
-                    // Reset the StringBuilder for the next part
-                    currentPart = new StringBuilder();
-                } else {
-                    // Otherwise, append the character to the current part
-                    currentPart.append(currentChar);
-                }
-            }
-        }
-
-        // Add the last part to the list
-        parts.add(currentPart.toString());
-
-        // Convert the list to an array and return
-        return parts.toArray(new String[0]);
-    }
-
-    public Message parseMessage(String message) {
-        if (message == null) {
-            return null;
-        }
-        Message msg = new Message();
-        String[] parts = split(message, ':');
-        if (parts.length < 2) {
-            return null;
-        }
+    private void getGroups() {
+        String sql = "SELECT * FROM groups WHERE group_id IN (SELECT group_id FROM group_members WHERE user_id = ?)";
         try {
-            msg.type = MessageType.valueOf(parts[0]);
-            msg.command = Command.valueOf(parts[1]);
-            if (parts.length == 3) {
-                msg.content = split(parts[2], ',');
+            PreparedStatement stmt = db.getStatement(sql);
+            stmt.setInt(1, user.id);
+            ResultSet rs = stmt.executeQuery();
+            String response = "RESPONSE:" + Code.OK + ":";
+            while (rs.next()) {
+                int group_id = rs.getInt("group_id");
+                String group_name = rs.getString("group_name");
+                response += group_id + "," + group_name + ",";
             }
-            else {
-                msg.content = new String[0];
-            }
-            return msg;
-        } catch (Exception e) {
-            return null;
+            response = response.substring(0, response.length() - 1);
+            outputStream.println(response);
+        } catch (SQLException e) {
+            e.printStackTrace();
+            outputStream.println("RESPONSE:" + Code.SQL_ERROR.toString());
         }
     }
     
@@ -289,7 +210,7 @@ class ClientHandler implements Runnable {
         }
     }
 
-    public Code broadCastMesage(Message msg) {
+    public void broadCastMesage(ServerMessage msg) {
         //get all the ClientHandlers of the same group that are logged in
         //send a MESSAGE to the clients with msg
         int group_id = Integer.parseInt(msg.content[0]);
@@ -304,9 +225,7 @@ class ClientHandler implements Runnable {
                 client.outputStream.println(msg.toString());
             }
         }
-        return Code.OK;
     }
-
 }
 
 public class Server {
@@ -316,7 +235,12 @@ public class Server {
     public static int port = 12345;
     public static ArrayList<ClientHandler> clients = new ArrayList<>();
 
-    public static void main(String[] args) {instance = new Server();}
+    public static void main(String[] args) {
+        db = DBConnection.getInstance();
+        //part to execute sql test
+
+        instance = new Server();
+    }
 
     public static Server getInstance() {return instance;}
 

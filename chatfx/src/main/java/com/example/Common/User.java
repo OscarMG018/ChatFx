@@ -1,4 +1,4 @@
-package com.example.Server;
+package com.example.Common;
 
 import java.util.ArrayList;
 

@@ -2,6 +2,8 @@ package com.example.Client;
 
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
+import com.example.Common.*;
+import com.example.Common.ServerMessage.*;
 
 
 public class SignUpControler {
@@ -22,18 +24,18 @@ public class SignUpControler {
             return;
         }
         Client client = Client.getInstance();
-        String message = client.sendMessage("SIGNUP:" + username.getText() + "," + displayName.getText() + "," + password.getText());
+        ServerMessage message = client.sendMessage("SIGNUP:" + username.getText() + "," + displayName.getText() + "," + password.getText());
         System.out.println(message);
-        if(message.substring(0, 2).equals("OK")) {
-            User user = User.getCurrentUser();
-            user.id = Integer.parseInt(message.split(",")[1]);
+        if(message.code.equals(Code.OK)) {
+            User user = Client.user;
+            user.id = Integer.parseInt(message.content[0]);
             user.username = username.getText();
             user.displayName = displayName.getText();
             user.password = password.getText();
             SceneControler.getInstance().ChangeScene("chat.fxml");
         }
         else {
-            error.setText(message);
+            error.setText(message.code.toString());
         }
     }
 

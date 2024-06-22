@@ -1,5 +1,8 @@
 package com.example.Client;
 
+import com.example.Common.*;
+import com.example.Common.ServerMessage.*;
+
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
 
@@ -13,18 +16,17 @@ public class LoginControler {
 
     public void login() {
         Client client = Client.getInstance();
-        String message = client.sendMessage("LOGIN:" + username.getText() + "," + password.getText());
+        ServerMessage message = client.sendMessage("LOGIN:" + username.getText() + "," + password.getText());
         System.out.println(message);
-        if(message.substring(0, 2).equals("OK")) {
-            String[] parts = message.split(",");
-            User user = User.getCurrentUser();
-            user.id = Integer.parseInt(parts[1]);
-            user.displayName = parts[2];
+        if(message.code.equals(Code.OK)) {
+            User user = Client.user;
+            user.id = Integer.parseInt(message.content[0]);
+            user.displayName = message.content[1];
             user.username = username.getText();
             user.password = password.getText();
             SceneControler.getInstance().ChangeScene("chat.fxml");
         } else {
-            error.setText(message);
+            error.setText(message.code.toString());
         }
     }
 

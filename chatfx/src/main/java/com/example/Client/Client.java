@@ -1,18 +1,11 @@
 package com.example.Client;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.Socket;
-import java.net.UnknownHostException;
+import com.example.Common.*;
+import com.example.Common.ServerMessage.*;
 
-import org.apache.commons.io.input.TeeInputStream;
+import java.net.*;
+import java.io.*;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.io.PipedInputStream;
-import java.io.PipedOutputStream;
-import java.io.PrintWriter;
 
 public class Client {
     static Socket socket;
@@ -28,7 +21,7 @@ public class Client {
     
     private Client() {
         try {
-            user = User.getCurrentUser();
+            user = new User();
             socket = new Socket("192.168.3.163", port);
             InputStream socketInputStream = socket.getInputStream();
 
@@ -59,21 +52,24 @@ public class Client {
         return client;
     }
 
-    public String sendMessage(String message) {
+    public ServerMessage sendMessage(String message) {
         try {
             outputStream.println("REQUEST:" + message);
             String line = "";
             StringBuilder response = new StringBuilder();
             while ((line = responseStream.readLine()) != null) {
                 if (line.startsWith("RESPONSE:")) {
-                    response.append(line.substring("RESPONSE:".length()));
+                    response.append(line);
                     break;
                 }
             }
-            return response.toString();
+            return ServerMessage.parseMessage(response.toString());
         } catch (IOException e) {
             e.printStackTrace();
-            return "IOException";
+            ServerMessage returnMessage = new ServerMessage();
+            returnMessage.code = Code.IO_EXCEPTION;
+            returnMessage.type = MessageType.RESPONSE;
+            return returnMessage;
         }
     }
 
