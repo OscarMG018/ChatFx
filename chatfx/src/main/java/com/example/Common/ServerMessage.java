@@ -14,6 +14,9 @@ public class ServerMessage {
         SIGNUP,
         CHATMESSAGE,
         GETGROUPS,
+        CREATEGROUP,
+        INVITEUSER,
+        INVITERESPONSE,
         EXIT
     }
     
