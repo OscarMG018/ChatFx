@@ -4,16 +4,30 @@ import java.util.*;
 import com.example.Common.*;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
+import javafx.scene.text.Font;
+import javafx.scene.text.FontWeight;
+
 import java.io.*;
 import javafx.application.Platform;
 import javafx.fxml.*;
 import java.net.*;
+import java.sql.Timestamp;
 import java.time.*;
 import javafx.event.*;
 import javafx.scene.*;
 import javafx.geometry.*;
+import java.time.format.*;
 
-//TODO:SERVER: cahnge user groupIds when accepting invite
+/*TODO LIST
+ * Store Messages in a database
+ * Load Past Messages of a group
+ * 
+ * See user inforramtion by clicking on a message
+ */
+
+ /*KNOWN BUGS
+  *Messages from Two different Users with the same display name will appear as selfMessages for each other
+  */
 
 public class ChatControler implements Initializable {
     @FXML
@@ -24,6 +38,8 @@ public class ChatControler implements Initializable {
     public ScrollPane scrollPane;
     @FXML
     public VBox GroupList;
+    @FXML
+    public Label groupName;
 
     public Client client;
     public User user;
@@ -37,29 +53,78 @@ public class ChatControler implements Initializable {
         groups = new ArrayList<Group>();
         LoadGroups();
         LoadInvites();
+        //Load the messages of the first group
+        groupName.setText(groups.get(ActiveGroup).getName());
+        groups.get(ActiveGroup).ViewMessages(this);
+        //Start the message reciver
         Thread t = new Thread(new MessageReciver(chatBox, client, user, this));
         t.start();
     }
 
     private void LoadInvites() {
-        // TODO load invites from server
+        ServerMessage msg = client.sendMessage(ServerMessage.Command.GETINVITES.toString() + ":" + user.id);
+        System.out.println(msg);
+        for (int i = 0; i<msg.content.length;i+=2) {
+            final int index = i/2;  
+            int id = Integer.parseInt(msg.content[i]);
+            String groupName = msg.content[i+1];
+            addInvite(String.valueOf(id), groupName);
+        } 
     }
 
-    public void addMessage(String groupId, String displayName, String message) {
+    public void addMessage(String groupId, String displayName, String message, boolean isSelf) {
         for(Group group : groups) {
             if(group.getId() == Integer.parseInt(groupId)) {
                 group.addMessage(displayName, message);
+                String time = LocalTime.now().toString();
                 if (group.getId() == groups.get(ActiveGroup).getId()) {
                     //Add message to chatBox
-                    Platform.runLater(() ->{
-                        Label label = new Label(displayName + ": " + message);
-                        label.setWrapText(true);
-                        chatBox.getChildren().add(label);
-                        scrollPane.setVvalue(1.0);
-                    });
+                    addMessageToChatBox(displayName, message, time, isSelf);
                 }
             }
         }
+    }
+
+    public void addMessageToChatBox(String displayName, String message, String time, boolean isSelf) {
+        Platform.runLater(() -> {
+            VBox messagePane = new VBox();
+            messagePane.setStyle(" -fx-background-color: #e0e0e0;\r\n" + //
+                                "    -fx-background-radius: 10;\r\n" + //
+                                "    -fx-padding: 10;\r\n" + //
+                                "    -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.1), 10, 0, 0, 5);");
+            messagePane.setAlignment(Pos.TOP_LEFT);
+            
+
+            Label nameLabel = new Label(displayName);
+            nameLabel.setFont(Font.font("System", FontWeight.BOLD, 14));
+            nameLabel.setStyle("-fx-text-fill: #3366cc;\r\n" + //
+                                "    -fx-padding: 0 0 5 0;");
+
+            Label timeLabel = new Label(time);
+            timeLabel.setFont(Font.font("System", FontWeight.LIGHT, 12));
+            timeLabel.setStyle("-fx-text-fill: #3366cc;\r\n" + //
+                                "    -fx-padding: 0 0 5 0;");
+            FlowPane timeNamePane = new FlowPane();
+            timeNamePane.getChildren().addAll(nameLabel, timeLabel);
+            timeNamePane.setHgap(10);
+            timeNamePane.setAlignment(Pos.TOP_RIGHT);
+
+            Label messageLabel = new Label(message);
+            messageLabel.setWrapText(true);
+            messageLabel.setStyle("-fx-text-fill: #333333; -fx-text-alignment: left;");
+
+            messagePane.getChildren().addAll(timeNamePane, messageLabel);
+            FlowPane flowPane = new FlowPane();
+            if (isSelf) {
+                flowPane.setAlignment(Pos.TOP_RIGHT);
+            }
+            else {
+                flowPane.setAlignment(Pos.TOP_LEFT);
+            }
+            flowPane.getChildren().add(messagePane);
+            chatBox.getChildren().add(flowPane);
+            scrollPane.setVvalue(1.0);
+        });
     }
 
     public void sendMessage() {
@@ -69,8 +134,8 @@ public class ChatControler implements Initializable {
             return;
         }
         message.setText("");
-        client.sendMessageWithoutResponse("CHATMESSAGE:" +groups.get(ActiveGroup).getId()+",<TEXT!"+ msg.length() +">" +msg);
-        addMessage(""+groups.get(ActiveGroup).getId(), user.displayName, msg);
+        client.sendMessageWithoutResponse("CHATMESSAGE:" +groups.get(ActiveGroup).getId()+",<TEXT!"+ (msg.length()-1) +">" +msg);
+        addMessage(""+groups.get(ActiveGroup).getId(), user.displayName, msg, true);
     }
 
     public void LoadGroups() {
@@ -83,22 +148,19 @@ public class ChatControler implements Initializable {
             String userIsAdmin = msg.content[i+2];
             Group group = new Group(id, groupName, userIsAdmin.equals("true"));
             groups.add(group);
-            Platform.runLater(() ->{  
-                //Add group to groupList
-                Button button = (Button) group.getGroupNode(index, this);
-                GroupList.getChildren().add(button);
-            });
+            Button button = (Button) group.getGroupNode(index, this);
+            GroupList.getChildren().add(button); 
         }
     }
 
     public void addInvite(String groupId, String groupName) {
-        //TODO add invite to group
         //like a group in the groupList but with a different color and it does not show the chat it shows a confirm button to accept the invite or decline button to decline the invite
         Button button = new Button(groupName);
         button.setMaxWidth(Double.MAX_VALUE);
         button.setPrefHeight(50);
         button.setStyle("-fx-font-size: 20px; -fx-background-color: #000000; -fx-text-fill: #FFFFFF;");
         button.setOnAction(e -> {
+            chatBox.getChildren().clear();
             HBox pane = new HBox();
             pane.setStyle("-fx-background-color: #000000;");
             VBox.setVgrow(pane, Priority.ALWAYS);
@@ -132,7 +194,7 @@ public class ChatControler implements Initializable {
         Node bt = groups.get(index).getGroupNode(index, this);
         GroupList.getChildren().add(index, bt);
         ActiveGroup = index;
-        groups.get(ActiveGroup).ViewMessages(chatBox);
+        groups.get(ActiveGroup).ViewMessages(this);
     }
 
     private void declineInvite(String groupId, Button button) {
@@ -157,6 +219,22 @@ public class ChatControler implements Initializable {
                 GroupList.getChildren().add(button);
             }
         });
+    }
+
+    public void deleteGroup(int id) {
+        int index = -1;
+        for (int i = 0; i < groups.size(); i++) {
+            if (groups.get(i).getId() == id) {
+                index = i;
+                break;
+            }
+        }
+        groups.remove(index);
+        GroupList.getChildren().remove(index);
+        if (ActiveGroup >= groups.size()) {
+            ActiveGroup = groups.size() - 1;
+        }
+        groups.get(ActiveGroup).ViewMessages(this);
     }
 }
 
@@ -209,7 +287,7 @@ class MessageReciver implements Runnable {
                 String groupId = msg.content[0];
                 String displayName = msg.content[1];
                 String message = msg.content[2].substring(1+msg.content[2].indexOf('>'));
-                chatControler.addMessage(groupId, displayName, message);
+                chatControler.addMessage(groupId, displayName, message, false);
                 break;
             case INVITEUSER:
                 if(msg.content.length != 2) {
@@ -248,22 +326,24 @@ class Group {
         button.setPrefHeight(50);
         button.setStyle("-fx-font-size: 20px;");
         button.setOnAction(e -> {
+            chatControler.groupName.setText(name);
             chatControler.ActiveGroup = index;
-            chatControler.groups.get(chatControler.ActiveGroup).ViewMessages(chatControler.chatBox);
+            chatControler.groups.get(chatControler.ActiveGroup).ViewMessages(chatControler);
         });
-        ContextMenu contextMenu = getContextMenu();
+        ContextMenu contextMenu = getContextMenu(chatControler);
         button.setOnContextMenuRequested(e -> {
             contextMenu.show(button, e.getScreenX(), e.getScreenY());
         });
         return button;
     }
 
-    private ContextMenu getContextMenu() {
+    private ContextMenu getContextMenu(ChatControler chatControler) {
         if (!userIsAdmin) {
             ContextMenu contextMenu = new ContextMenu(); 
             MenuItem leaveGroup = new MenuItem("Leave Group");
             leaveGroup.setOnAction(e -> {
-                //TODO leave group
+                Client.getInstance().sendMessageWithoutResponse("LEAVEGROUP:" + id + "," + Client.user.id);
+                chatControler.deleteGroup(id);
             });
             contextMenu.getItems().add(leaveGroup);
             return contextMenu;
@@ -272,7 +352,8 @@ class Group {
         
         MenuItem deleteGroup = new MenuItem("Delete Group");
         deleteGroup.setOnAction(e -> {
-            //TODO delete group
+            Client.getInstance().sendMessageWithoutResponse("DELETEGROUP:" + id);
+            chatControler.deleteGroup(id);
         });
         contextMenu.getItems().add(deleteGroup);
 
@@ -292,24 +373,36 @@ class Group {
     }
 
     public void loadMessages() {
-        // TODO load messages from server
-    }
-
-    public void ViewMessages(VBox chatBox) {
-        chatBox.getChildren().clear();
-        for (Message message : messages) {
-            Label label = new Label(message.username + ": " + message.message);
-            label.setWrapText(true);
-            chatBox.getChildren().add(label);
+        ServerMessage msg = Client.getInstance().sendMessage("GETMESSAGES:" + id);
+        System.out.println("loadMessages: " + msg);
+        System.out.println(msg.content.length);
+        for (String s : msg.content) {
+            System.out.println(s);
+        }
+        if (msg.code == ServerMessage.Code.OK) {
+            for (int i = 0; i < msg.content.length; i+=3) {
+                String displayName = msg.content[i];
+                String message = msg.content[i+1].substring(msg.content[i+1].indexOf('>') + 1);
+                String timeS = msg.content[i+2].substring(msg.content[i+2].indexOf('>') + 1);
+                Timestamp time = Timestamp.valueOf(timeS);
+                messages.add(new Message(displayName, message, time.toLocalDateTime()));
+            }
         }
     }
 
-    public void addMessage(String username, String message) {
-        messages.add(new Message(username, message));
+    public void ViewMessages(ChatControler chatControler) {
+        chatControler.chatBox.getChildren().clear();
+        for (Message message : messages) {
+            chatControler.addMessageToChatBox(message.displayName, message.message, message.time.toString(), message.displayName.equals(Client.user.displayName));
+        }
     }
 
-    public void addMessage(String username, String message, LocalTime time) {
-        messages.add(new Message(username, message, time));
+    public void addMessage(String displayName, String message) {
+        messages.add(new Message(displayName, message));
+    }
+
+    public void addMessage(String displayName, String message, LocalDateTime time) {
+        messages.add(new Message(displayName, message, time));
     }
 
     public int getId() {
@@ -319,6 +412,7 @@ class Group {
     public String getName() {
         return name;
     }
+    
     public ArrayList<Message> getMessages() {
         return messages;
     }   
@@ -337,16 +431,16 @@ class Group {
 }
 
 class Message {
-    public String username;
+    public String displayName;
     public String message;
-    public LocalTime time;
+    public LocalDateTime time;
 
-    public Message(String username, String message) {
-        this(username, message, LocalTime.now());
+    public Message(String displayName, String message) {
+        this(displayName, message, LocalDateTime.now());
     }
 
-    public Message(String username, String message, LocalTime time) {
-        this.username = username;
+    public Message(String displayName, String message, LocalDateTime time) {
+        this.displayName = displayName;
         this.message = message;
         this.time = time;
     }

@@ -15,6 +15,7 @@ public class Client {
     static PrintWriter outputStream;
     static Client client;
     static int port = 12345;
+    static String host = "localhost";//192.168.3.163
     static Thread messageReciver;
     static Thread duplicator;
 
@@ -22,7 +23,7 @@ public class Client {
     private Client() {
         try {
             user = new User();
-            socket = new Socket("192.168.3.163", port);
+            socket = new Socket(host, port);
             InputStream socketInputStream = socket.getInputStream();
 
             PipedInputStream pos1 = new PipedInputStream();

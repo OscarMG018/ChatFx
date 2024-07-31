@@ -110,6 +110,13 @@ class ClientHandler implements Runnable {
                     }
                     broadCastMesage(msg);
                     break;
+                case GETMESSAGES:
+                    if (msg.content.length != 1) {
+                        outputStream.println("RESPONSE:" + Code.INVALID_COMMAND_USAGE.toString());
+                        return;
+                    }
+                    getMessages(msg);
+                    break;
                 case GETGROUPS:
                     if (msg.content.length != 1) {
                         outputStream.println("RESPONSE:" + Code.INVALID_COMMAND_USAGE.toString());
@@ -117,12 +124,33 @@ class ClientHandler implements Runnable {
                     }
                     getGroups();
                     break;
+                case GETINVITES:
+                    if (msg.content.length != 1) {
+                        outputStream.println("RESPONSE:" + Code.INVALID_COMMAND_USAGE.toString());
+                        return;
+                    }
+                    getInvites(msg);
+                    break;
                 case CREATEGROUP:
                     if (msg.content.length != 2) {
                         outputStream.println("RESPONSE:" + Code.INVALID_COMMAND_USAGE.toString());
                         return;
                     }
                     createGroup(msg);
+                    break;
+                case LEAVEGROUP:
+                    if (msg.content.length != 2) {
+                        outputStream.println("RESPONSE:" + Code.INVALID_COMMAND_USAGE.toString());
+                        return;
+                    }
+                    leaveGroup(msg);
+                    break;
+                case DELETEGROUP:
+                    if (msg.content.length != 1) {
+                        outputStream.println("RESPONSE:" + Code.INVALID_COMMAND_USAGE.toString());
+                        return;
+                    }
+                    deleteGroup(msg);
                     break;
                 case INVITEUSER:
                     if (msg.content.length != 2) {
@@ -145,6 +173,93 @@ class ClientHandler implements Runnable {
         }
     }
     
+    private void getMessages(ServerMessage msg) {
+        int group_id = Integer.parseInt(msg.content[0]);
+        String response = "RESPONSE:" + Code.OK + ":";
+        try {
+            String sql = "SELECT * FROM messages WHERE group_id = ?";
+            PreparedStatement stmt = db.getStatement(sql);
+            stmt.setInt(1, group_id);
+            ResultSet rs = stmt.executeQuery();
+            while (rs.next()) {
+                System.out.println(rs.getString("display_name"));
+                String display_name = rs.getString("display_name");
+                String message = rs.getString("message");
+                String created_at = rs.getString("created_at");
+                response += display_name + "," + message + ",<TEXT!" + (created_at.length()-1) +">" + created_at + ",";//created_at contains ':'
+                
+            }
+            response = response.substring(0, response.length() - 1);
+            System.out.println(response);
+            outputStream.println(response);
+        }
+        catch (SQLException e) {
+            e.printStackTrace();
+            outputStream.println("RESPONSE:" + Code.SQL_ERROR.toString());
+        }
+    }
+
+    private void deleteGroup(ServerMessage msg) {
+        String groupId = msg.content[0];
+        try {
+            String sql = "DELETE FROM groups WHERE group_id = ?";
+            PreparedStatement stmt = db.getStatement(sql);
+            stmt.setInt(1, Integer.parseInt(groupId));
+            stmt.executeUpdate();
+            List<User> users = Server.getUsersInGroup(Integer.parseInt(groupId));
+            for (User user : users) {
+                user.groupIds.remove((Object)Integer.parseInt(groupId));
+            }
+        }
+        catch (SQLException e) {
+            e.printStackTrace();
+            outputStream.println("RESPONSE:" + Code.SQL_ERROR.toString());
+        }
+    }
+
+    private void leaveGroup(ServerMessage msg) {
+        String groupId = msg.content[0];
+        String userId = msg.content[1];
+        try {
+            String sql = "DELETE FROM group_members WHERE group_id = ? AND user_id = ?";
+            PreparedStatement stmt = db.getStatement(sql);
+            stmt.setInt(1, Integer.parseInt(groupId));
+            stmt.setInt(2, Integer.parseInt(userId));
+            stmt.executeUpdate();
+            broadCastMesage(Integer.parseInt(groupId), "User " + Server.getUsername(Integer.parseInt(userId)) + " left the group");
+            ClientHandler client = Server.getClientHandler(Integer.parseInt(userId));
+            if (client != null) {
+                client.user.groupIds.remove((Object)Integer.parseInt(groupId));
+            }
+        }
+        catch (SQLException e) {
+            e.printStackTrace();
+            outputStream.println("RESPONSE:" + Code.SQL_ERROR.toString());
+        }
+    }
+
+    private void getInvites(ServerMessage msg) {
+        String userId = msg.content[0];
+        String response = "RESPONSE:" + Code.OK + ":";
+        try {
+            String sql = "SELECT gi.group_id, g.group_name FROM group_invites gi JOIN groups g ON gi.group_id = g.group_id WHERE gi.user_id = ?";
+            PreparedStatement stmt = db.getStatement(sql);
+            stmt.setInt(1, Integer.parseInt(userId));
+            ResultSet rs = stmt.executeQuery();
+            while (rs.next()) {
+                int group_id = rs.getInt("group_id");
+                String group_name = rs.getString("group_name");
+                response += group_id + "," + group_name + ",";
+            }
+            response = response.substring(0, response.length() - 1);
+            outputStream.println(response);
+        }
+        catch (SQLException e) {
+            e.printStackTrace();
+            outputStream.println("RESPONSE:" + Code.SQL_ERROR.toString());
+        }
+    }
+
     private void inviteResponse(ServerMessage msg) {
         String userId = msg.content[0];
         String groupId = msg.content[1];
@@ -175,6 +290,7 @@ class ClientHandler implements Runnable {
             stmt.setInt(1, Integer.parseInt(groupId));
             stmt.setInt(2, Integer.parseInt(userId));
             stmt.executeUpdate();
+            user.groupIds.add(Integer.parseInt(groupId));
 
         }
         catch (SQLException e) {
@@ -194,6 +310,18 @@ class ClientHandler implements Runnable {
             if (rs.next()) {
                 userId = rs.getInt("user_id");
             }
+            sql = "SELECT creator_id FROM groups WHERE group_id = ?";
+            stmt = db.getStatement(sql);
+            stmt.setInt(1, groupId);
+            rs = stmt.executeQuery();
+            int creatorId = 0;
+            if (rs.next()) {
+                creatorId = rs.getInt("creator_id");
+            }
+            if (userId == creatorId) {
+                return;
+            }
+
             sql = "INSERT INTO group_invites (group_id, user_id) VALUES (?,?)";
             stmt = db.getStatement(sql);
             stmt.setInt(1, groupId);
@@ -235,6 +363,7 @@ class ClientHandler implements Runnable {
             stmt.setInt(1, groupId);
             stmt.setInt(2, Integer.parseInt(creatorId));
             stmt.executeUpdate();
+            user.groupIds.add(groupId);
         }
         catch (SQLException e) {
             e.printStackTrace();
@@ -357,6 +486,19 @@ class ClientHandler implements Runnable {
                 client.outputStream.println(msg.toString());
             }
         }
+        //Save the message to the database
+        try {
+            String sql = "INSERT INTO messages (group_id, user_id, display_name, message) VALUES (?, ?, ?, ?)";
+            PreparedStatement stmt = db.getStatement(sql);
+            stmt.setInt(1, group_id);
+            stmt.setInt(2, user.id);
+            stmt.setString(3, user.displayName);
+            stmt.setString(4, msg.content[2]);
+            stmt.executeUpdate();
+        }
+        catch (SQLException e) {
+            e.printStackTrace();
+        }
     }
 
     public void broadCastMesage(int group_id, String message) {
@@ -374,6 +516,19 @@ class ClientHandler implements Runnable {
             if (client.user.groupIds.contains(group_id)) {
                 client.outputStream.println(msg.toString());
             }
+        }
+        //Save the message to the database
+        try {
+            String sql = "INSERT INTO messages (group_id, user_id, display_name, message) VALUES (?, ?, ?, ?)";
+            PreparedStatement stmt = db.getStatement(sql);
+            stmt.setInt(1, group_id);
+            stmt.setInt(2, 1);
+            stmt.setString(3, "Server");
+            stmt.setString(4, message);
+            stmt.executeUpdate();
+        }
+        catch (SQLException e) {
+            e.printStackTrace();
         }
     }
 }
@@ -448,5 +603,25 @@ public class Server {
             e.printStackTrace();
             return "";
         }
+    }
+
+    public static List<User> getUsersInGroup(int groupId) {
+        List<User> users = new ArrayList<>();
+        for (ClientHandler client : clients) {
+            if (client.user.groupIds.contains(groupId)) {
+                users.add(client.user);
+            }
+        }
+        return users;
+    }
+
+    public static List<ClientHandler> getClientsInGroup(int groupId) {
+        List<ClientHandler> clients = new ArrayList<>();
+        for (ClientHandler client : clients) {
+            if (client.user.groupIds.contains(groupId)) {
+                clients.add(client);
+            }
+        }
+        return clients;
     }
 }

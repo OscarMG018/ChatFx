@@ -13,8 +13,12 @@ public class ServerMessage {
         LOGIN,
         SIGNUP,
         CHATMESSAGE,
+        GETMESSAGES,
         GETGROUPS,
+        GETINVITES,
         CREATEGROUP,
+        LEAVEGROUP,
+        DELETEGROUP,
         INVITEUSER,
         INVITERESPONSE,
         EXIT
@@ -53,6 +57,7 @@ public class ServerMessage {
     }
 
     private static String[] split(String str, char delimiter) {
+        System.out.println(str + " " + delimiter);
         // List to hold the parts
         ArrayList<String> parts = new ArrayList<>();
         // StringBuilder to build each part
@@ -61,12 +66,14 @@ public class ServerMessage {
         // Iterate through each character in the string
         for (int i = 0; i < str.length(); i++) {
             if (currentPart.toString().matches(".*<TEXT!\\d+>")){
-                String numString = currentPart.toString().substring(currentPart.indexOf("<")+6, currentPart.length()-1);
+                System.out.println(currentPart.toString());
+                String numString = currentPart.toString().substring(currentPart.lastIndexOf("<")+6, currentPart.lastIndexOf(">"));
                 int n = Integer.parseInt(numString);
                 for (int j = 0; j < n; j++) {
                     currentPart.append(str.charAt(i));
                     i++;
                 }
+                i--;
             }
             else {
                 char currentChar = str.charAt(i);
