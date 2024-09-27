@@ -6,20 +6,21 @@ import java.io.*;
 import java.util.*;
 import java.util.regex.*;
 import com.example.Common.*;
-import com.example.Common.ServerMessage.*;
+import com.example.Common.MessageDecoder.*;
 
 class ClientHandler implements Runnable {
     private Socket socket;
-    private BufferedReader inputStream;
-    private PrintWriter outputStream;
+    private DataInputStream inputStream;
+    private DataOutputStream outputStream;
     private static DBConnection db;
+    private boolean isRunning;
     User user;
 
     public ClientHandler(Socket socket) {
         this.socket = socket;
         try {
-            this.inputStream = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-            this.outputStream = new PrintWriter(socket.getOutputStream(), true);
+            this.inputStream = new DataInputStream(socket.getInputStream());
+            this.outputStream = new DataOutputStream(socket.getOutputStream());
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -28,31 +29,37 @@ class ClientHandler implements Runnable {
 
     @Override
     public void run() {
-        user = new User();
-        while (true) {
-            String message = "";
+        user = null;
+        isRunning = true;
+        while (isRunning) {
             try {
-                message = inputStream.readLine();
-                System.out.println("Mesage Recived: " + message);
-                onMessage(message);
-            } catch (IOException e) {
-                System.err.println("Error: " + e.getMessage());
-                break;
+                if (inputStream.available() > 0) {
+                    byte[] messageBytes = inputStream.readAllBytes();
+                    Message message = MessageDecoder.decode(messageBytes);
+                    System.out.println("Mesage Recived: " + message);
+                    onMessage(message);
+                }
+            } catch (Exception e) {
+                onError(e);
             }
         }
+        onClose();
+    }
+
+    public void onError(Exception e) {
+        e.printStackTrace();
     }
 
     public void onClose() {
-        System.out.println("Closing connection");
-        outputStream.println("EXIT");
+        Server.clients.remove(this);
         try {
-            if (socket!= null) {
+            if (socket != null) {
                 socket.close();
             }
-            if (inputStream!= null) {
+            if (inputStream != null) {
                 inputStream.close();
             }
-            if (outputStream!= null) {
+            if (outputStream != null) {
                 outputStream.close();
             }
         } catch (IOException e) {
@@ -60,474 +67,416 @@ class ClientHandler implements Runnable {
         }
     }
 
-    public void onError(Throwable throwable) {
-        Server.onError(throwable);
+    public void onMessage(Message message) {
+        switch (message.command) {
+            case LOGIN:
+                login(message);
+                break;
+            case SIGNUP:
+                signup(message);
+                break;
+            case CHATMESSAGE:
+                chatMessage(message);
+                break;
+            default:
+                sendMessage(MessageDecoder.encode(Command.ERROR, "Invalid command"));
+                break;
+        }
     }
 
-    public void onMessage(String message) {//login:username,password or signup:username,password,displayName        
-        ServerMessage msg = ServerMessage.parseMessage(message);
-        if (msg == null) {
-            outputStream.println("RESPONSE:" + Code.INVALID_MESSAGE.toString());
+    public void login(Message message) {
+        //username, password
+        String[] data = message.payload.split(",");
+        if (data.length != 2) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "Invalid login data"));
             return;
         }
-        if (msg.type.equals(MessageType.REQUEST)) {
-            switch (msg.command) {
-                case LOGIN:
-                    if (msg.content.length != 2) {
-                        outputStream.println("RESPONSE:" + Code.INVALID_COMMAND_USAGE.toString());
-                        return;
-                    }
-                    String username = msg.content[0];
-                    String password = msg.content[1];
-                    Code code = logIn(username, password);
-                    if (code.equals(Code.OK)) {
-                        outputStream.println("RESPONSE:" + code.toString()+":"+user.id+","+user.displayName);
-                    } 
-                    else {
-                        outputStream.println("RESPONSE:" + code.toString());
-                    }
-                    break;
-                case SIGNUP:
-                    if (msg.content.length != 3) {
-                        outputStream.println("RESPONSE:" + Code.INVALID_COMMAND_USAGE.toString());
-                        return;
-                    }
-                    String _username = msg.content[0];
-                    String _displayName = msg.content[1];
-                    String _password = msg.content[2];
-                    Code _code = signUp(_username, _password, _displayName);
-                    if (_code.equals(Code.OK)) {
-                        outputStream.println("RESPONSE:" + _code.toString()+":"+user.id);
-                    } 
-                    else {
-                        outputStream.println("RESPONSE:" + _code.toString());
-                    }
-                    break;
-                case CHATMESSAGE:
-                    if (msg.content.length != 2) {
-                        System.out.println(Code.INVALID_COMMAND_USAGE.toString() + "for CHATMESSAGE: " + msg);
-                        return;
-                    }
-                    broadCastMesage(msg);
-                    break;
-                case GETMESSAGES:
-                    if (msg.content.length != 1) {
-                        outputStream.println("RESPONSE:" + Code.INVALID_COMMAND_USAGE.toString());
-                        return;
-                    }
-                    getMessages(msg);
-                    break;
-                case GETGROUPS:
-                    if (msg.content.length != 1) {
-                        outputStream.println("RESPONSE:" + Code.INVALID_COMMAND_USAGE.toString());
-                        return;
-                    }
-                    getGroups();
-                    break;
-                case GETINVITES:
-                    if (msg.content.length != 1) {
-                        outputStream.println("RESPONSE:" + Code.INVALID_COMMAND_USAGE.toString());
-                        return;
-                    }
-                    getInvites(msg);
-                    break;
-                case CREATEGROUP:
-                    if (msg.content.length != 2) {
-                        outputStream.println("RESPONSE:" + Code.INVALID_COMMAND_USAGE.toString());
-                        return;
-                    }
-                    createGroup(msg);
-                    break;
-                case LEAVEGROUP:
-                    if (msg.content.length != 2) {
-                        outputStream.println("RESPONSE:" + Code.INVALID_COMMAND_USAGE.toString());
-                        return;
-                    }
-                    leaveGroup(msg);
-                    break;
-                case DELETEGROUP:
-                    if (msg.content.length != 1) {
-                        outputStream.println("RESPONSE:" + Code.INVALID_COMMAND_USAGE.toString());
-                        return;
-                    }
-                    deleteGroup(msg);
-                    break;
-                case INVITEUSER:
-                    if (msg.content.length != 2) {
-                        outputStream.println("RESPONSE:" + Code.INVALID_COMMAND_USAGE.toString());
-                        return;
-                    }
-                    inviteUser(msg);
-                    break;
-                case INVITERESPONSE:
-                    if (msg.content.length != 3) {
-                        outputStream.println("RESPONSE:" + Code.INVALID_COMMAND_USAGE.toString());
-                        return;
-                    }
-                    inviteResponse(msg);
-                    break;
-                case EXIT:
-                    onClose();
-                    return;
-            }
-        }
-    }
-    
-    private void getMessages(ServerMessage msg) {
-        int group_id = Integer.parseInt(msg.content[0]);
-        String response = "RESPONSE:" + Code.OK + ":";
+        String username = data[0];
+        String password = data[1];
+        PreparedStatement statement = db.getStatement("SELECT * FROM users WHERE username = ? AND password = ?");
         try {
-            String sql = "SELECT * FROM messages WHERE group_id = ?";
-            PreparedStatement stmt = db.getStatement(sql);
-            stmt.setInt(1, group_id);
-            ResultSet rs = stmt.executeQuery();
-            while (rs.next()) {
-                System.out.println(rs.getString("display_name"));
-                String display_name = rs.getString("display_name");
-                String message = rs.getString("message");
-                String created_at = rs.getString("created_at");
-                response += display_name + "," + message + ",<TEXT!" + (created_at.length()-1) +">" + created_at + ",";//created_at contains ':'
-                
-            }
-            response = response.substring(0, response.length() - 1);
-            System.out.println(response);
-            outputStream.println(response);
-        }
-        catch (SQLException e) {
-            e.printStackTrace();
-            outputStream.println("RESPONSE:" + Code.SQL_ERROR.toString());
-        }
-    }
-
-    private void deleteGroup(ServerMessage msg) {
-        String groupId = msg.content[0];
-        try {
-            String sql = "DELETE FROM groups WHERE group_id = ?";
-            PreparedStatement stmt = db.getStatement(sql);
-            stmt.setInt(1, Integer.parseInt(groupId));
-            stmt.executeUpdate();
-            List<User> users = Server.getUsersInGroup(Integer.parseInt(groupId));
-            for (User user : users) {
-                user.groupIds.remove((Object)Integer.parseInt(groupId));
+            statement.setString(1, username);
+            statement.setString(2, password);
+            ResultSet resultSet = statement.executeQuery();
+            if (resultSet.next()) {
+                user = new User();
+                user.id = resultSet.getInt("user_id");
+                user.username = resultSet.getString("username");
+                user.displayName = resultSet.getString("display_name");
+                PreparedStatement statement2 = db.getStatement("SELECT * FROM group_members WHERE user_id = ?");
+                statement2.setInt(1, user.id);
+                ResultSet resultSet2 = statement2.executeQuery();
+                while (resultSet2.next()) {
+                    user.groupIds.add(resultSet2.getInt("group_id"));
+                }
+                sendMessage(MessageDecoder.encode(Command.LOGIN, "Login successful" + user.username + "," + user.displayName));
+            } else {
+                sendMessage(MessageDecoder.encode(Command.ERROR, "Invalid username or password"));
             }
         }
         catch (SQLException e) {
-            e.printStackTrace();
-            outputStream.println("RESPONSE:" + Code.SQL_ERROR.toString());
+            sendMessage(MessageDecoder.encode(Command.ERROR, "Server error: " + e.getMessage()));
         }
     }
 
-    private void leaveGroup(ServerMessage msg) {
-        String groupId = msg.content[0];
-        String userId = msg.content[1];
+    public void signup(Message message) {
+        //username, password, display_name
+        String[] data = message.payload.split(",");
+        if (data.length != 3) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "Invalid signup data"));
+            return;
+        }
+        String username = data[0];
+        String password = data[1];
+        String display_name = data[2];
+        //check if username is already taken
+        PreparedStatement statement = db.getStatement("SELECT * FROM users WHERE username = ?");
         try {
-            String sql = "DELETE FROM group_members WHERE group_id = ? AND user_id = ?";
-            PreparedStatement stmt = db.getStatement(sql);
-            stmt.setInt(1, Integer.parseInt(groupId));
-            stmt.setInt(2, Integer.parseInt(userId));
-            stmt.executeUpdate();
-            broadCastMesage(Integer.parseInt(groupId), "User " + Server.getUsername(Integer.parseInt(userId)) + " left the group");
-            ClientHandler client = Server.getClientHandler(Integer.parseInt(userId));
-            if (client != null) {
-                client.user.groupIds.remove((Object)Integer.parseInt(groupId));
-            }
-        }
-        catch (SQLException e) {
-            e.printStackTrace();
-            outputStream.println("RESPONSE:" + Code.SQL_ERROR.toString());
-        }
-    }
-
-    private void getInvites(ServerMessage msg) {
-        String userId = msg.content[0];
-        String response = "RESPONSE:" + Code.OK + ":";
-        try {
-            String sql = "SELECT gi.group_id, g.group_name FROM group_invites gi JOIN groups g ON gi.group_id = g.group_id WHERE gi.user_id = ?";
-            PreparedStatement stmt = db.getStatement(sql);
-            stmt.setInt(1, Integer.parseInt(userId));
-            ResultSet rs = stmt.executeQuery();
-            while (rs.next()) {
-                int group_id = rs.getInt("group_id");
-                String group_name = rs.getString("group_name");
-                response += group_id + "," + group_name + ",";
-            }
-            response = response.substring(0, response.length() - 1);
-            outputStream.println(response);
-        }
-        catch (SQLException e) {
-            e.printStackTrace();
-            outputStream.println("RESPONSE:" + Code.SQL_ERROR.toString());
-        }
-    }
-
-    private void inviteResponse(ServerMessage msg) {
-        String userId = msg.content[0];
-        String groupId = msg.content[1];
-        String response = msg.content[2];
-        String sql = "DELETE FROM group_invites WHERE group_id = ? AND user_id = ?";
-        try {
-            PreparedStatement stmt = db.getStatement(sql);
-            stmt.setInt(1, Integer.parseInt(groupId));
-            stmt.setInt(2, Integer.parseInt(userId));
-            stmt.executeUpdate();
-            if (response.equals("ACCEPT")) {
-                acceptInvite(groupId, userId);
-                broadCastMesage(Integer.parseInt(groupId), "User " + Server.getUsername(Integer.parseInt(userId)) + " accepted the invite");
-            }
-            else {
-                broadCastMesage(Integer.parseInt(groupId), "User " + Server.getUsername(Integer.parseInt(userId)) + " declined the invite");
-            }
-        }
-        catch (SQLException e) {
-            e.printStackTrace();
-        }
-    }
-
-    private void acceptInvite(String groupId, String userId) {
-        try {
-            String sql = "INSERT INTO group_members (group_id, user_id) VALUES (?,?)";
-            PreparedStatement stmt = db.getStatement(sql);
-            stmt.setInt(1, Integer.parseInt(groupId));
-            stmt.setInt(2, Integer.parseInt(userId));
-            stmt.executeUpdate();
-            user.groupIds.add(Integer.parseInt(groupId));
-
-        }
-        catch (SQLException e) {
-            e.printStackTrace();
-        }
-    }
-
-    private void inviteUser(ServerMessage msg) {
-        int groupId = Integer.parseInt(msg.content[0]);
-        String username = msg.content[1];
-        int userId = 0;
-        try {
-            String sql = "SELECT user_id FROM users WHERE username = ?";
-            PreparedStatement stmt = db.getStatement(sql);
-            stmt.setString(1, username);
-            ResultSet rs = stmt.executeQuery();
-            if (rs.next()) {
-                userId = rs.getInt("user_id");
-            }
-            sql = "SELECT creator_id FROM groups WHERE group_id = ?";
-            stmt = db.getStatement(sql);
-            stmt.setInt(1, groupId);
-            rs = stmt.executeQuery();
-            int creatorId = 0;
-            if (rs.next()) {
-                creatorId = rs.getInt("creator_id");
-            }
-            if (userId == creatorId) {
+            statement.setString(1, username);
+            ResultSet resultSet = statement.executeQuery();
+            if (resultSet.next()) {
+                sendMessage(MessageDecoder.encode(Command.ERROR, "Username already taken"));
                 return;
             }
-
-            sql = "INSERT INTO group_invites (group_id, user_id) VALUES (?,?)";
-            stmt = db.getStatement(sql);
-            stmt.setInt(1, groupId);
-            stmt.setInt(2, userId);
-            stmt.executeUpdate();
-
-            sql = "SELECT group_name FROM groups WHERE group_id = ?";
-            stmt = db.getStatement(sql);
-            stmt.setInt(1, groupId);
-            rs = stmt.executeQuery();
-            String groupName = "";
-            if (rs.next()) {
-                groupName = rs.getString("group_name");
-            }
-            ClientHandler client = Server.getClientHandler(userId);
-            System.out.println("Client: " + client);
-            if (client != null) {
-                System.out.println("Sending invite to " + userId + " for group " + groupName);
-                client.outputStream.println("MESSAGE:" + ServerMessage.Command.INVITEUSER + ":" + groupId + "," + groupName);
-            }
         }
         catch (SQLException e) {
-            e.printStackTrace();
+            sendMessage(MessageDecoder.encode(Command.ERROR, "Server error: " + e.getMessage()));
+            return;
+        }
+        //create user
+        PreparedStatement statement2 = db.getStatement("INSERT INTO users (username, password, display_name) VALUES (?, ?, ?)");
+        try {
+            statement2.setString(1, username);
+            statement2.setString(2, password);
+            statement2.setString(3, display_name);
+            int id = db.insertAndReturnId(statement2);
+            user = new User();
+            user.id = id;
+            user.username = username;
+            user.displayName = display_name;
+            //add user to group 1 (global group)
+            PreparedStatement statement3 = db.getStatement("INSERT INTO group_members (group_id, user_id) VALUES (?, ?)");
+            statement3.setInt(1, 1);
+            statement3.setInt(2, user.id);
+            statement3.executeUpdate();
+            user.groupIds.add(1);
+            sendMessage(MessageDecoder.encode(Command.SIGNUP, "Signup successful" + username + "," + display_name));
+        }
+        catch (SQLException e) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "Server error: " + e.getMessage()));
         }
     }
 
-    private void createGroup(ServerMessage msg) {
-        String creatorId = msg.content[0];
-        String groupName = msg.content[1];
-        int groupId = 0;
-        try {
-            String sql = "INSERT INTO groups (group_name, creator_id) VALUES (?,?)";
-            PreparedStatement stmt = db.getStatement(sql);
-            stmt.setString(1, groupName);
-            stmt.setString(2, creatorId);
-            groupId = db.insertAndReturnId(stmt);
-            sql = "INSERT INTO group_members (group_id, user_id) VALUES (?,?)";
-            stmt = db.getStatement(sql);
-            stmt.setInt(1, groupId);
-            stmt.setInt(2, Integer.parseInt(creatorId));
-            stmt.executeUpdate();
-            user.groupIds.add(groupId);
+    public void chatMessage(Message message) {
+        //group_id, message
+        if (user == null) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "User not logged in"));
+            return;
         }
-        catch (SQLException e) {
-            e.printStackTrace();
-            outputStream.println("RESPONSE:" + Code.SQL_ERROR.toString());
+
+        String[] data = message.payload.split(",");
+        if (data.length != 2) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "Invalid chat message data"));
+            return;
         }
-        outputStream.println("RESPONSE:" + Code.OK.toString() + ":" + groupId);
+        int group_id = Integer.parseInt(data[0]);
+        if (!user.groupIds.contains(group_id)) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "User not in group"));
+            return;
+        }
+        String messageString = data[1];
+        //send message to all clients in the group
+        for (ClientHandler client : Server.clients) {
+            if (client.user != null && client.user.groupIds.contains(group_id)) {
+                client.sendMessage(MessageDecoder.encode(Command.CHATMESSAGE, group_id + "," + messageString));
+            }
+        }
     }
 
-    private void getGroups() {
-        String sql = "SELECT \r\n" + //
-                        "    g.group_id,\r\n" + //
-                        "    g.group_name,\r\n" + //
-                        "    CASE \r\n" + //
-                        "        WHEN g.creator_id = gm.user_id THEN 'true'\r\n" + //
-                        "        ELSE 'false'\r\n" + //
-                        "    END AS is_owner\r\n" + //
-                        "FROM \r\n" + //
-                        "    groups g\r\n" + //
-                        "JOIN \r\n" + //
-                        "    group_members gm ON g.group_id = gm.group_id\r\n" + //
-                        "WHERE \r\n" + //
-                        "    gm.user_id = ?;";
+    public void getMessages(Message message) {
+        //group_id
+        if (user == null) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "User not logged in"));
+            return;
+        }
+        int group_id = Integer.parseInt(message.payload);
+        if (!user.groupIds.contains(group_id)) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "User not in group"));
+            return;
+        }
+        ArrayList<ChatMessage> messages = new ArrayList<>();
+        PreparedStatement statement = db.getStatement("SELECT * FROM messages WHERE group_id = ?");
         try {
-            PreparedStatement stmt = db.getStatement(sql);
-            stmt.setInt(1, user.id);
-            ResultSet rs = stmt.executeQuery();
-            String response = "RESPONSE:" + Code.OK + ":";
-            while (rs.next()) {
-                int group_id = rs.getInt("group_id");
-                String group_name = rs.getString("group_name");
-                String is_owner = rs.getString("is_owner");
-                response += group_id + "," + group_name + "," + is_owner + ",";
+            statement.setInt(1, group_id);
+            ResultSet resultSet = statement.executeQuery();
+            while (resultSet.next()) {
+                String messageString = resultSet.getString("message");
+                String username = resultSet.getString("username");
+                long timestamp = resultSet.getLong("timestamp");
+                ChatMessage chatMessage = new ChatMessage(messageString, group_id, username, timestamp);
+                messages.add(chatMessage);
             }
-            response = response.substring(0, response.length() - 1);
-            outputStream.println(response);
-        } catch (SQLException e) {
-            e.printStackTrace();
-            outputStream.println("RESPONSE:" + Code.SQL_ERROR.toString());
+            sendMessage(MessageDecoder.encode(Command.GETMESSAGES, "Get messages successful" + messages));
+        }
+        catch (SQLException e) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "Server error: " + e.getMessage()));
         }
     }
     
-    public Code signUp(String username, String password, String displayName) {
-        int user_id = 0;
-        try {
-            //check if user already exists
-            String sql = "SELECT * FROM users WHERE username = ?";
-            PreparedStatement stmt = db.getStatement(sql);
-            stmt.setString(1, username);
-            ResultSet rs = stmt.executeQuery();
-            if (rs.next()) {
-                return Code.USER_ALREADY_EXISTS;
-            }
-            //insert
-            sql = "INSERT INTO users (username, password, display_name) VALUES (?, ?, ?)";
-            stmt = db.getStatement(sql);
-            stmt.setString(1, username);
-            stmt.setString(2, password);
-            stmt.setString(3, displayName);
-            user_id = db.insertAndReturnId(stmt);
-            sql = "INSERT INTO group_members (group_id,user_id) VALUES (?,?)";
-            stmt = db.getStatement(sql);
-            stmt.setInt(1, 1);
-            stmt.setInt(2, user_id);
-            stmt.executeUpdate();
-        } catch (SQLException e) {
-            e.printStackTrace();
-            return Code.SQL_ERROR;
+    public void getGroups(Message message) {
+        if (user == null) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "User not logged in"));
+            return;
         }
-        user.id = user_id;
-        user.username = username;
-        user.displayName = displayName;
-        user.password = password;
-        user.groupIds.add(1);
-        return Code.OK;
+        if (message.payloadLength != 0) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "Invalid get groups data"));
+            return;
+        }
+        sendMessage(MessageDecoder.encode(Command.GETGROUPS, "Get groups successful" + user.groupIds.toString()));
     }
 
-    public Code logIn(String username, String password) {
-        try {
-            String sql = "SELECT * FROM users WHERE username = ?";
-            PreparedStatement stmt = db.getStatement(sql);
-            stmt.setString(1, username);
-            ResultSet rs = stmt.executeQuery();
-            if (rs.next()) {
-                if (rs.getString("password").equals(password)) {
-                    user.id = rs.getInt("user_id");
-                    user.username = username;
-                    user.displayName = rs.getString("display_name");
-                    user.password = password;
-                    //Get the Ids of the groups where the user is
-                    sql = "SELECT group_id FROM group_members WHERE user_id = ?";
-                    stmt = db.getStatement(sql);
-                    stmt.setInt(1, user.id);
-                    rs = stmt.executeQuery();
-                    while (rs.next()) {
-                        user.groupIds.add(rs.getInt("group_id"));
-                    }
-                    return Code.OK;
-                }
-                return Code.INVALID_PASSWORD;
-            }
-            return Code.USER_NOT_FOUND;
-        } catch (SQLException e) {
-            e.printStackTrace();
-            return Code.SQL_ERROR;
+    public void getInvites(Message message) {
+        if (user == null) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "User not logged in"));
+            return;
         }
-    }
-
-    public void broadCastMesage(ServerMessage msg) {
-        //get all the ClientHandlers of the same group that are logged in
-        //send a MESSAGE to the clients with msg
-        int group_id = Integer.parseInt(msg.content[0]);
-        ArrayList<ClientHandler> clients = Server.clients;
-        msg.type = MessageType.MESSAGE;
-        msg.content = new String[]{msg.content[0],user.displayName, msg.content[1]};
-        for (ClientHandler client : clients) {
-            if (client == this) {
-                continue;
-            }
-            if (client.user.groupIds.contains(group_id)) {
-                client.outputStream.println(msg.toString());
-            }
+        if (message.payloadLength != 0) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "Invalid get invites data"));
+            return;
         }
-        //Save the message to the database
+        PreparedStatement statement = db.getStatement("SELECT * FROM group_invites WHERE user_id = ?");
         try {
-            String sql = "INSERT INTO messages (group_id, user_id, display_name, message) VALUES (?, ?, ?, ?)";
-            PreparedStatement stmt = db.getStatement(sql);
-            stmt.setInt(1, group_id);
-            stmt.setInt(2, user.id);
-            stmt.setString(3, user.displayName);
-            stmt.setString(4, msg.content[2]);
-            stmt.executeUpdate();
+            statement.setInt(1, user.id);
+            ResultSet resultSet = statement.executeQuery();
+            ArrayList<Integer> invites = new ArrayList<>();
+            while (resultSet.next()) {
+                int group_id = resultSet.getInt("group_id");
+                invites.add(group_id);
+            }
+            sendMessage(MessageDecoder.encode(Command.GETINVITES, "Get invites successful" + invites.toString()));
         }
         catch (SQLException e) {
-            e.printStackTrace();
+            sendMessage(MessageDecoder.encode(Command.ERROR, "Server error: " + e.getMessage()));
         }
     }
 
-    public void broadCastMesage(int group_id, String message) {
-        //get all the ClientHandlers of the same group that are logged in
-        //send a MESSAGE to the clients with msg
-        ArrayList<ClientHandler> clients = Server.clients;
-        for (ClientHandler client : clients) {
-            ServerMessage msg = new ServerMessage();
-            msg.type = MessageType.MESSAGE;
-            msg.command = ServerMessage.Command.CHATMESSAGE;
-            msg.content = new String[]{String.valueOf(group_id), "Server", message};
-            if (client == this) {
-                continue;
-            }
-            if (client.user.groupIds.contains(group_id)) {
-                client.outputStream.println(msg.toString());
-            }
+    public void createGroup(Message message) {
+        //group_name
+        if (user == null) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "User not logged in"));
+            return;
         }
-        //Save the message to the database
+        String[] data = message.payload.split(",");
+        if (data.length != 1) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "Invalid create group data"));
+            return;
+        }
+        String group_name = data[0];
+        PreparedStatement statement = db.getStatement("INSERT INTO groups (group_name,creator_id,created_at) VALUES (?,?,?)");
         try {
-            String sql = "INSERT INTO messages (group_id, user_id, display_name, message) VALUES (?, ?, ?, ?)";
-            PreparedStatement stmt = db.getStatement(sql);
-            stmt.setInt(1, group_id);
-            stmt.setInt(2, 1);
-            stmt.setString(3, "Server");
-            stmt.setString(4, message);
-            stmt.executeUpdate();
+            statement.setString(1, group_name);
+            statement.setInt(2, user.id);
+            statement.setLong(3, System.currentTimeMillis());
+            int groupId = db.insertAndReturnId(statement);
+            //add user to group
+            PreparedStatement statement2 = db.getStatement("INSERT INTO group_members (group_id, user_id) VALUES (?, ?)");
+            statement2.setInt(1, groupId);
+            statement2.setInt(2, user.id);
+            statement2.executeUpdate();
+            user.groupIds.add(groupId);
+            sendMessage(MessageDecoder.encode(Command.CREATEGROUP, "Create group successful" + groupId));
         }
         catch (SQLException e) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "Server error: " + e.getMessage()));
+        }
+    }
+    
+    public void leaveGroup(Message message) {
+        //group_id
+        if (user == null) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "User not logged in"));
+            return;
+        }
+        String[] data = message.payload.split(",");
+        if (data.length != 1) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "Invalid leave group data"));
+            return;
+        }
+        int group_id = Integer.parseInt(data[0]);
+        if (!user.groupIds.contains(group_id)) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "User not in group"));
+            return;
+        }
+        PreparedStatement statement = db.getStatement("DELETE FROM group_members WHERE group_id = ? AND user_id = ?");
+        try {
+            statement.setInt(1, group_id);
+            statement.setInt(2, user.id);
+            statement.executeUpdate();
+            user.groupIds.remove(Integer.valueOf(group_id));
+    
+            sendMessage(MessageDecoder.encode(Command.LEAVEGROUP, "Leave group successful"));
+        }
+        catch (SQLException e) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "Server error: " + e.getMessage()));
+        }
+    }
+
+    public void deleteGroup(Message message) {
+        //group_id
+        if (user == null) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "User not logged in"));
+            return;
+        }
+        String[] data = message.payload.split(",");
+        if (data.length != 1) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "Invalid delete group data"));
+            return;
+        }
+        int group_id = Integer.parseInt(data[0]);
+        if (!user.groupIds.contains(group_id)) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "User not in group"));
+            return;
+        }
+        //see if the user is the creator of the group
+        PreparedStatement statement = db.getStatement("SELECT * FROM groups WHERE group_id = ? AND creator_id = ?");
+        try {
+            statement.setInt(1, group_id);
+            statement.setInt(2, user.id);
+            ResultSet resultSet = statement.executeQuery();
+            if (resultSet.next()) {
+                //delete group
+                PreparedStatement statement2 = db.getStatement("DELETE FROM groups WHERE group_id = ?");
+                statement2.setInt(1, group_id);
+                statement2.executeUpdate();
+                user.groupIds.remove(Integer.valueOf(group_id));
+                //delete all messages in the group
+                PreparedStatement statement3 = db.getStatement("DELETE FROM messages WHERE group_id = ?");
+                statement3.setInt(1, group_id);
+                statement3.executeUpdate();
+                //delete all group members in the group
+                PreparedStatement statement4 = db.getStatement("DELETE FROM group_members WHERE group_id = ?");
+                statement4.setInt(1, group_id);
+                statement4.executeUpdate();
+                //delete all group invites in the group
+                PreparedStatement statement5 = db.getStatement("DELETE FROM group_invites WHERE group_id = ?");
+                statement5.setInt(1, group_id);
+                statement5.executeUpdate();
+                sendMessage(MessageDecoder.encode(Command.DELETEGROUP, "Delete group successful"));
+            }
+            else {
+                sendMessage(MessageDecoder.encode(Command.ERROR, "User is not the creator of the group"));
+            }
+        }
+        catch (SQLException e) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "Server error: " + e.getMessage()));
+        }
+    }
+
+    public void inviteUser(Message message) {
+        //group_id, username
+        if (user == null) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "User not logged in"));
+            return;
+        }
+        String[] data = message.payload.split(",");
+        if (data.length != 2) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "Invalid invite user data"));
+            return;
+        }
+        int group_id = Integer.parseInt(data[0]);
+        String username = data[1];
+        //check if the user is in the group
+        if (!user.groupIds.contains(group_id)) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "User not in group"));
+            return;
+        }
+        //check if the user is already in the group
+        PreparedStatement statement = db.getStatement("SELECT * FROM group_members WHERE group_id = ? AND user_id = ?");
+        try {
+            statement.setInt(1, group_id);
+            statement.setInt(2, user.id);
+            ResultSet resultSet = statement.executeQuery();
+            if (resultSet.next()) {
+                sendMessage(MessageDecoder.encode(Command.ERROR, "User already in group"));
+                return;
+            }
+            //check if the user is already invited to the group
+            PreparedStatement statement2 = db.getStatement("SELECT * FROM group_invites WHERE group_id = ? AND user_id = ?");
+            statement2.setInt(1, group_id);
+            statement2.setString(2, username);
+            ResultSet resultSet2 = statement2.executeQuery();
+            if (resultSet2.next()) {
+                sendMessage(MessageDecoder.encode(Command.ERROR, "User already invited to group"));
+                return;
+            }
+            //invite the user
+            PreparedStatement statement3 = db.getStatement("INSERT INTO group_invites (group_id, user_id) VALUES (?, ?)");
+            statement3.setInt(1, group_id);
+            statement3.setString(2, username);
+            statement3.executeUpdate();
+            sendMessage(MessageDecoder.encode(Command.INVITEUSER, "Invite user successful"));
+        }
+        catch (SQLException e) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "Server error: " + e.getMessage()));
+        }
+    }
+
+    public void inviteResponse(Message message) {
+        //group_id, response(1 for accept, 0 for decline)
+        if (user == null) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "User not logged in"));
+            return;
+        }
+        String[] data = message.payload.split(",");
+        if (data.length != 2) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "Invalid invite response data"));
+            return;
+        }
+        int group_id = Integer.parseInt(data[0]);
+        int response = Integer.parseInt(data[1]);
+        if (response == 1) {
+            //add user to group
+            PreparedStatement statement = db.getStatement("INSERT INTO group_members (group_id, user_id) VALUES (?, ?)");
+            try {
+                statement.setInt(1, group_id);
+                statement.setInt(2, user.id);
+                statement.executeUpdate();
+                user.groupIds.add(group_id);
+            }
+            catch (SQLException e) {
+                sendMessage(MessageDecoder.encode(Command.ERROR, "Server error: " + e.getMessage()));
+            }
+        }
+        //delete invite
+        PreparedStatement statement2 = db.getStatement("DELETE FROM group_invites WHERE group_id = ? AND user_id = ?");
+        try {
+            statement2.setInt(1, group_id);
+            statement2.setInt(2, user.id);
+            statement2.executeUpdate();
+            sendMessage(MessageDecoder.encode(Command.INVITERESPONSE, "Invite response successful"));
+        }
+        catch (SQLException e) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "Server error: " + e.getMessage()));
+        }
+    }
+
+    public void exit(Message message) {
+        //
+        if (user == null) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "User not logged in"));
+            return;
+        }
+        if (message.payloadLength != 0) {
+            sendMessage(MessageDecoder.encode(Command.ERROR, "Invalid exit data"));
+            return;
+        }
+        isRunning = false;
+    }
+
+    public void sendMessage(byte[] message) {
+        try {
+            outputStream.write(message);
+        } catch (IOException e) {
             e.printStackTrace();
         }
     }
@@ -576,52 +525,5 @@ public class Server {
     public static void onError(Throwable throwable) {
         System.out.println("Error: " + throwable.getMessage());
         throwable.printStackTrace();
-    }
-
-    public static ClientHandler getClientHandler(int userId) {
-        for (ClientHandler client : clients) {
-            System.out.println(client.user.id);
-            if (client.user.id == userId) {
-                return client;
-            }
-        }
-        return null;
-    }
-
-    public static String getUsername(int userId) {
-        try {
-            String sql = "SELECT username FROM users WHERE user_id = ?";
-            PreparedStatement stmt = db.getStatement(sql);
-            stmt.setInt(1, userId);
-            ResultSet rs = stmt.executeQuery();
-            if (rs.next()) {
-                return rs.getString("username");
-            }
-            return "";
-        }
-        catch (SQLException e) {
-            e.printStackTrace();
-            return "";
-        }
-    }
-
-    public static List<User> getUsersInGroup(int groupId) {
-        List<User> users = new ArrayList<>();
-        for (ClientHandler client : clients) {
-            if (client.user.groupIds.contains(groupId)) {
-                users.add(client.user);
-            }
-        }
-        return users;
-    }
-
-    public static List<ClientHandler> getClientsInGroup(int groupId) {
-        List<ClientHandler> clients = new ArrayList<>();
-        for (ClientHandler client : clients) {
-            if (client.user.groupIds.contains(groupId)) {
-                clients.add(client);
-            }
-        }
-        return clients;
     }
 }
