@@ -3,7 +3,7 @@ package com.example.Client;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
 import com.example.Common.*;
-import com.example.Common.ServerMessage.*;
+import com.example.Common.MessageDecoder.*;
 
 
 public class SignUpControler {
@@ -24,18 +24,17 @@ public class SignUpControler {
             return;
         }
         Client client = Client.getInstance();
-        ServerMessage message = client.sendMessage("SIGNUP:" + username.getText() + "," + displayName.getText() + "," + password.getText());
+        Message message = client.sendMessage(Command.SIGNUP, username.getText() + "," + password.getText() + "," + displayName.getText());
         System.out.println(message);
-        if(message.code.equals(Code.OK)) {
+        if(message.command.equals(Command.ACK)) {
+            String[] payload = message.payload.split(",");
             User user = Client.user;
-            user.id = Integer.parseInt(message.content[0]);
-            user.username = username.getText();
-            user.displayName = displayName.getText();
-            user.password = password.getText();
+            user.username = payload[0];
+            user.displayName = payload[1];
             SceneControler.getInstance().ChangeScene("chat.fxml");
         }
         else {
-            error.setText(message.code.toString());
+            error.setText(message.payload);
         }
     }
 

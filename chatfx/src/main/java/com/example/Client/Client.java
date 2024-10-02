@@ -1,44 +1,64 @@
 package com.example.Client;
 
 import com.example.Common.*;
-import com.example.Common.ServerMessage.*;
+import com.example.Common.MessageDecoder.*;
 
 import java.net.*;
 import java.io.*;
+import java.util.*;
+import java.util.concurrent.*;
+
+class ClientReader implements Runnable {
+
+    DataInputStream inputStream;
+
+    public ClientReader(DataInputStream inputStream) {
+        this.inputStream = inputStream;
+    }
+
+    public void run() {
+        try {
+            while(true) {
+                if (inputStream.available() > 0) {
+                    Message message = MessageDecoder.readMessage(inputStream);//reads only one message from the stream
+                    System.out.println("Message Recived: " + message.command + " " + message.payload);
+                    //add message to pendingMessages
+                    synchronized (Client.pendingMessages) {
+                        Client.pendingMessages.add(message);
+                        System.out.println("Pending Messages: " + Client.pendingMessages.size());
+                    }
+                }
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+}
 
 
 public class Client {
-    static Socket socket;
-    static User user;
-    static BufferedReader messageStream;
-    static BufferedReader responseStream;
-    static PrintWriter outputStream;
-    static Client client;
-    static int port = 12345;
-    static String host = "localhost";//192.168.3.163
-    static Thread messageReciver;
-    static Thread duplicator;
+    public static Client client;
 
+    public static Socket socket;
+    public static int port = 12345;
+    public static String host = "localhost";//192.168.3.163
+    
+    public static User user;
+    public static DataInputStream inputStream;
+    public static DataOutputStream outputStream;
+    public static CopyOnWriteArrayList<Message> pendingMessages;
+
+    Thread readerThread;
     
     private Client() {
         try {
-            user = new User();
             socket = new Socket(host, port);
-            InputStream socketInputStream = socket.getInputStream();
-
-            PipedInputStream pos1 = new PipedInputStream();
-            PipedOutputStream pis1 = new PipedOutputStream(pos1);
-
-            PipedInputStream pos2 = new PipedInputStream();
-            PipedOutputStream pis2 = new PipedOutputStream(pos2);
-            
-            duplicator = new Thread(new StreamDuplicator(socketInputStream, pis1, pis2));
-            duplicator.start();
-
-            messageStream = new BufferedReader(new InputStreamReader(pos2));
-            responseStream = new BufferedReader(new InputStreamReader(pos1));
-
-            outputStream = new PrintWriter(socket.getOutputStream(), true);
+            inputStream = new DataInputStream(socket.getInputStream());
+            outputStream = new DataOutputStream(socket.getOutputStream());
+            pendingMessages = new CopyOnWriteArrayList<>();
+            readerThread = new Thread(new ClientReader(inputStream));
+            readerThread.start();
+            user = new User();
         } catch (UnknownHostException e) {
             e.printStackTrace();
         } catch (IOException e) {
@@ -53,72 +73,55 @@ public class Client {
         return client;
     }
 
-    public ServerMessage sendMessage(String message) {
+    public Message sendMessage(Command command, String payload) {
+        System.out.println("Sending message: " + command + " " + payload);
         try {
-            outputStream.println("REQUEST:" + message);
-            String line = "";
-            StringBuilder response = new StringBuilder();
-            while ((line = responseStream.readLine()) != null) {
-                if (line.startsWith("RESPONSE:")) {
-                    response.append(line);
-                    break;
-                }
-            }
-            return ServerMessage.parseMessage(response.toString());
+            outputStream.write(MessageDecoder.encode(command, payload));
+            outputStream.flush();
         } catch (IOException e) {
             e.printStackTrace();
-            ServerMessage returnMessage = new ServerMessage();
-            returnMessage.code = Code.IO_EXCEPTION;
-            returnMessage.type = MessageType.RESPONSE;
-            return returnMessage;
         }
-    }
-
-    public void sendMessageWithoutResponse(String message) {
-        outputStream.println("REQUEST:" + message);
+        //wait for response on pendingMessages
+        System.out.println("Waiting for response");
+        Message message = null;
+        while (message == null) {
+            synchronized (pendingMessages) {
+                for (Message msg : pendingMessages) {
+                    if (msg.command == Command.ACK || msg.command == Command.ERROR) {
+                        System.out.println("Response Recived: " + msg.command + " " + msg.payload);
+                        message = msg;
+                        pendingMessages.remove(msg);
+                        break;
+                    }
+                }
+            }
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+        System.out.println("Returning Response");
+        return message;
     }
 
     public void close() {
-        sendMessage("EXIT");
-    }
-
-    public BufferedReader getReader() {
-        return messageStream;
-    }
-
-    static class StreamDuplicator implements Runnable {
-        private InputStream original;
-        private OutputStream out1;
-        private OutputStream out2;
-
-        public StreamDuplicator(InputStream original, OutputStream out1, OutputStream out2) {
-            this.original = original;
-            this.out1 = out1;
-            this.out2 = out2;
-        }
-
-        @Override
-        public void run() {
-            try {
-                int data;
-                while (true) {
-                    while ((data = original.read()) != -1) {
-                        out1.write(data);
-                        out2.write(data);
-                    }
-                }
-            } catch (IOException e) {
-                e.printStackTrace();
+        try {
+            if (socket != null) {
+                socket.close();
             }
-            finally {
-                try {
-                    out1.close();
-                    out2.close();
-                    original.close();
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
+            if (inputStream != null) {
+                inputStream.close();
             }
+            if (outputStream != null) {
+                outputStream.close();
+            }
+            if (readerThread != null) {
+                readerThread.interrupt();
+            }
+        } catch (Exception e) {
+            System.out.println("Error closing client: ");
+            e.printStackTrace();
         }
     }
 }

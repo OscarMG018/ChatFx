@@ -22,10 +22,10 @@ public class ResetDataBase {
             db.getStatement("DROP TABLE IF EXISTS messages").executeUpdate();
             db.getStatement("DROP TABLE IF EXISTS group_invites").executeUpdate();
             //Create them again
-            db.getStatement("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT, display_name TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)").executeUpdate();
-            db.getStatement("CREATE TABLE IF NOT EXISTS groups (group_id INTEGER PRIMARY KEY AUTOINCREMENT, group_name TEXT, creator_id INTEGER, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (creator_id) REFERENCES users(user_id) ON DELETE CASCADE)").executeUpdate();
+            db.getStatement("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT, display_name TEXT, created_at INTEGER)").executeUpdate();
+            db.getStatement("CREATE TABLE IF NOT EXISTS groups (group_id INTEGER PRIMARY KEY AUTOINCREMENT, group_name TEXT, creator_id INTEGER, created_at INTEGER, FOREIGN KEY (creator_id) REFERENCES users(user_id) ON DELETE CASCADE)").executeUpdate();
             db.getStatement("CREATE TABLE IF NOT EXISTS group_members (group_id INTEGER, user_id INTEGER, PRIMARY KEY (group_id, user_id), FOREIGN KEY (group_id) REFERENCES groups(group_id) ON DELETE CASCADE, FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE)").executeUpdate();
-            db.getStatement("CREATE TABLE IF NOT EXISTS messages (message_id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER, user_id INTEGER, display_name TEXT, message TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (group_id) REFERENCES groups(group_id) ON DELETE CASCADE, FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE)").executeUpdate();
+            db.getStatement("CREATE TABLE IF NOT EXISTS messages (message_id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER, user_id INTEGER, display_name TEXT, message TEXT, created_at INTEGER, FOREIGN KEY (group_id) REFERENCES groups(group_id) ON DELETE CASCADE, FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE)").executeUpdate();
             db.getStatement("CREATE TABLE IF NOT EXISTS group_invites (group_id INTEGER, user_id INTEGER, PRIMARY KEY (group_id, user_id), FOREIGN KEY (group_id) REFERENCES groups(group_id) ON DELETE CASCADE, FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE)").executeUpdate();
             
             db.getStatement("INSERT INTO users (username, password, display_name) VALUES ('admin', '789admin123', 'Admin')").executeUpdate();

@@ -14,11 +14,6 @@ public class ChatMessage {
     }
 
     public String toString() {
-        return "ChatMessage{" +
-                "message='" + message + '\'' +
-                ", group_id=" + group_id +
-                ", displayName='" + displayName + '\'' +
-                ", createdAt=" + createdAt +
-                '}';
+        return "{" + message + "," + group_id + "," + displayName + "," + createdAt + "}";
     }
 }
